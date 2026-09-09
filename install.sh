@@ -106,7 +106,7 @@ rollback_and_die() {
 preserve_current_soul() {
   local candidate suffix
   [ -f "$HERMES_HOME_DIR/SOUL.md" ] || return 1
-  for suffix in normal current current-before-soul-switcher; do
+  for suffix in current current-before-soul-switcher; do
     candidate="$HERMES_HOME_DIR/souls/$suffix.md"
     if [ -f "$candidate" ] && [ ! -L "$candidate" ] && cmp -s "$HERMES_HOME_DIR/SOUL.md" "$candidate"; then
       say "Preserved current SOUL.md as souls/$suffix.md (already present)."
@@ -132,11 +132,29 @@ preserve_current_soul() {
   return 1
 }
 
-install_template() {
-  local name="$1" target="$HERMES_HOME_DIR/souls/$1.md"
-  if [ ! -e "$target" ] && [ ! -L "$target" ]; then
-    cp "$MOD_DIR/souls/$name.md" "$target"
-  fi
+install_bundled_souls() {
+  local source filename name target
+  BUNDLED_DEFAULT=""
+
+  for source in "$MOD_DIR"/souls/*.md; do
+    [ -f "$source" ] || continue
+    [ ! -L "$source" ] || die "bundled souls may not be symlinks: $source"
+
+    filename="${source##*/}"
+    name="${filename%.md}"
+    [[ "$name" =~ ^[a-z0-9][a-z0-9_-]*$ ]] ||
+      die "invalid bundled soul filename: $filename"
+
+    target="$HERMES_HOME_DIR/souls/$filename"
+    if [ ! -e "$target" ] && [ ! -L "$target" ]; then
+      cp -- "$source" "$target"
+      say "Installed bundled soul: $filename"
+    fi
+
+    if [ "$name" = "default" ] || [ -z "$BUNDLED_DEFAULT" ]; then
+      BUNDLED_DEFAULT="$name"
+    fi
+  done
 }
 
 HERMES_DIR="$(locate_hermes "${1:-}")"
@@ -145,9 +163,8 @@ BACKUP_DIR="$HERMES_DIR/.soul-switcher-backup"
 if [ -f "$BACKUP_DIR/installed" ]; then
   [ -f "$HERMES_DIR/$MODULE_FILE" ] || die "backup says installed, but $MODULE_FILE is missing"
   mkdir -p "$HERMES_HOME_DIR/souls"
-  install_template coder
-  install_template chaos
-  say "Hermes Soul Switcher is already installed. Nothing changed."
+  install_bundled_souls
+  say "Hermes Soul Switcher is already installed. Bundled souls synchronized."
   exit 0
 fi
 [ ! -e "$BACKUP_DIR" ] || die "found an incomplete backup at $BACKUP_DIR; inspect it before retrying"
@@ -198,15 +215,14 @@ if [ -z "$PYTHON_BIN" ] || ! "$PYTHON_BIN" -c \
 fi
 
 mkdir -p "$HERMES_HOME_DIR/souls"
+install_bundled_souls
 if [ -f "$HERMES_HOME_DIR/SOUL.md" ]; then
   preserve_current_soul
 else
-  install_template normal
-  cp "$HERMES_HOME_DIR/souls/normal.md" "$HERMES_HOME_DIR/SOUL.md"
-  say "Created SOUL.md from souls/normal.md."
+  [ -n "$BUNDLED_DEFAULT" ] || rollback_and_die "no bundled Markdown souls were found"
+  cp "$HERMES_HOME_DIR/souls/$BUNDLED_DEFAULT.md" "$HERMES_HOME_DIR/SOUL.md"
+  say "Created SOUL.md from souls/$BUNDLED_DEFAULT.md."
 fi
-install_template coder
-install_template chaos
 
 printf '%s\n' "Hermes Soul Switcher" > "$BACKUP_DIR/installed"
 INSTALL_STARTED=0

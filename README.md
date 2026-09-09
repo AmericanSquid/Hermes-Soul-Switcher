@@ -4,9 +4,7 @@ A small source patch for [Nous Research Hermes Agent](https://github.com/NousRes
 
 ```text
 /soul
-/soul normal
-/soul coder
-/soul chaos
+/soul default
 ```
 
 `/soul` lists saved souls and marks the active one. `/soul NAME` atomically copies `~/.hermes/souls/NAME.md` to `~/.hermes/SOUL.md`. Hermes already reads `SOUL.md` when it builds an agent, so the patch only refreshes that agent for the next message.
@@ -32,13 +30,15 @@ HERMES_INSTALL_DIR=/path/to/hermes-agent ./install.sh
 
 Restart any Hermes processes that were already running. No build, dependency install, or Docker change is required.
 
-The installer is safe to run again. It keeps the first pristine backup and does not overwrite saved soul files.
+The installer is safe to run again. It keeps the first pristine backup and does not overwrite saved soul files. Every valid top-level `souls/*.md` file bundled with this repository is copied automatically, so rerunning the installer after an update adds newly bundled souls.
 
 ## Existing SOUL.md behavior
 
-If `~/.hermes/SOUL.md` exists, the installer leaves it active and copies it into the souls directory. It prefers `normal.md`, then `current.md`, then a non-conflicting `current-N.md`. Existing soul files are never overwritten.
+If `~/.hermes/SOUL.md` exists, the installer leaves it active and copies it into the souls directory as `current.md` or a non-conflicting `current-N.md`. Existing soul files are never overwritten.
 
-If no `SOUL.md` exists, the included `normal.md` becomes the initial soul. Small `coder.md` and `chaos.md` examples are also installed when those names are free.
+If no `SOUL.md` exists, the included `default.md` becomes the initial soul. If a repository intentionally omits `default.md`, the first bundled soul in filename order is used instead.
+
+Repository contributors can bundle another soul simply by adding a valid Markdown file directly to `souls/`. No installer code change is required.
 
 Add a soul by creating a lowercase file directly inside the souls directory, for example:
 
@@ -82,6 +82,6 @@ It also installs one small new module:
 
 - `hermes_cli/soul_switcher.py`
 
-User-state changes are limited to creating `~/.hermes/souls/`, adding the bundled examples only when their filenames are unused, preserving an existing `SOUL.md` there, and creating `SOUL.md` from `normal.md` only when it was absent.
+User-state changes are limited to creating `~/.hermes/souls/`, adding bundled souls only when their filenames are unused, preserving an existing `SOUL.md` there, and creating `SOUL.md` from `default.md` (or the first bundled soul) only when it was absent.
 
 Backups live temporarily at `<hermes-install>/.soul-switcher-backup/` and are removed after a successful uninstall. The patch was built and tested against Hermes commit `b1f003e18633298d549668b8e186af84cca45b76` (2026-09-08). On a source version whose surrounding code no longer matches, installation stops during a dry run before modifying anything.

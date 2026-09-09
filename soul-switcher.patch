@@ -1,0 +1,125 @@
+diff --git a/gateway/run_busy.py b/gateway/run_busy.py
+--- a/gateway/run_busy.py
++++ b/gateway/run_busy.py
+@@ -758,7 +758,7 @@ class GatewayBusySessionMixin:
+     # Dispatched only on the idle path (busy dispatch has its own allowlist).
+     _IDLE_COMMANDS = (
+         "topic", "whoami", "platform", "stop", "reasoning", "memory", "skills", "fast",
+-        "approvals", "model", "codex-runtime", "personality", "suggestions", "save", "retry",
++        "approvals", "model", "codex-runtime", "personality", "soul", "suggestions", "save", "retry",
+         "sethome", "compress", "usage", "topup", "insights", "reload-mcp", "reload-skills",
+         "bundles", "debug", "title", "resume", "sessions", "branch", "rollback", "diff", "goal",
+         "loop", "refine", "review", "voice",
+diff --git a/gateway/slash_commands_model.py b/gateway/slash_commands_model.py
+--- a/gateway/slash_commands_model.py
++++ b/gateway/slash_commands_model.py
+@@ -167,7 +167,7 @@ def _model_provider_listing_lines(providers) -> list[str]:
+ 
+ 
+ class GatewayModelCommandsMixin:
+-    """Model-route slash commands (/model, /codex-runtime, /reasoning, /fast, /personality)."""
++    """Model-route slash commands (/model, /codex-runtime, /reasoning, /fast, /personality, /soul)."""
+ 
+     # ----------------------------------------------------------------- /model
+ 
+@@ -581,6 +581,20 @@ class GatewayModelCommandsMixin:
+             return t("gateway.personality.cleared")
+         return t("gateway.personality.set_to", name=name)
+ 
++    async def _handle_soul_command(self, event: MessageEvent) -> str:
++        """Handle /soul by replacing only SOUL.md and refreshing this chat's cached agent."""
++        from hermes_cli.soul_switcher import SoulError, format_soul_list, switch_soul
++
++        args = event.get_command_args().strip()
++        if not args:
++            return format_soul_list()
++        try:
++            selected = switch_soul(args)
++        except SoulError as exc:
++            return f"❌ {exc}\nUse /soul to list available souls."
++        self._evict_cached_agent(self._session_key_for_source(event.source))
++        return f"✓ Soul switched to '{selected}'. Active on your next message."
++
+     # ----------------------------------------------------------- /reasoning, /fast
+ 
+     def _save_gateway_config_key(self, key_path: str, value) -> bool:
+diff --git a/hermes_cli/cli_commands_mixin.py b/hermes_cli/cli_commands_mixin.py
+--- a/hermes_cli/cli_commands_mixin.py
++++ b/hermes_cli/cli_commands_mixin.py
+@@ -1494,7 +1494,7 @@ class CLICommandsMixin:
+         _pr(f"  ✅ Worktree ready: {wt_info['path']}", f"  Branch: {wt_info['branch']}",
+             "  Terminal and file tools now operate in the worktree.")
+ 
+-    # ---- /personality, /pet, /hatch -------------------------------------------------------
++    # ---- /personality, /soul, /pet, /hatch ------------------------------------------------
+     def _handle_personality_command(self, cmd: str):
+         """Handle /personality [name] — list or set a predefined personality. All resolution and
+         persistence goes through hermes_cli.personality, the single owner of personality state."""
+@@ -1541,6 +1541,20 @@ class CLICommandsMixin:
+             _pr(f"{face} Personality set to '{name}' {scope}",
+                 f"  \"{_ellipsize(personality_prompt, 60)}\"")
+ 
++    def _handle_soul_command(self, cmd: str):
++        """Handle /soul [name] by replacing only HERMES_HOME/SOUL.md."""
++        from hermes_cli.soul_switcher import SoulError, format_soul_list, switch_soul
++
++        name = _command_arg(cmd)
++        if not name:
++            return _pr("", format_soul_list(), "")
++        try:
++            selected = switch_soul(name)
++        except SoulError as exc:
++            return _pr(f"(x_x) {exc}", "  Use /soul to list available souls.")
++        self.agent = None  # Rebuild on the next message so SOUL.md is re-read.
++        _pr(f"(^_^)b Soul switched to '{selected}'.", "  Active on your next message.")
++
+     def _handle_pet_command(self, cmd: str):
+         """Handle /pet [toggle|list|scale <n>|off|<slug>] — the petdex mascot. Writes
+         ``display.pet.*`` to config; pet surfaces pick it up on their next poll."""
+diff --git a/hermes_cli/commands.py b/hermes_cli/commands.py
+--- a/hermes_cli/commands.py
++++ b/hermes_cli/commands.py
+@@ -158,6 +158,8 @@ COMMAND_REGISTRY: list[CommandDef] = [
+                busy_policy="reject", busy_handler="codex-runtime"),
+     CommandDef("personality", "Set a predefined personality", "Configuration",
+                args_hint="[name]", argument_mode="options"),
++    CommandDef("soul", "List or switch SOUL.md from ~/.hermes/souls", "Configuration",
++               args_hint="[name]", argument_mode="options"),
+     CommandDef("statusbar", "Toggle the context/model status bar", "Configuration",
+                cli_only=True, aliases=("sb",), desktop="terminal"),
+     CommandDef("battery", "Toggle a color-coded battery indicator in the status bar",
+diff --git a/tui_gateway/methods_slash.py b/tui_gateway/methods_slash.py
+--- a/tui_gateway/methods_slash.py
++++ b/tui_gateway/methods_slash.py
+@@ -227,7 +227,7 @@ def _live_slash_command_output(sid: str, session: Optional[dict], name: str, arg
+ # Read-then-mutate live agent/session state that a running turn is using; rejected
+ # while running (parity with session.compress / session.undo and the gateway's
+ # running-agent /model guard).
+-_MUTATES_WHILE_RUNNING = frozenset({"model", "personality", "prompt", "compress"})
++_MUTATES_WHILE_RUNNING = frozenset({"model", "personality", "soul", "prompt", "compress"})
+ 
+ 
+ def _compress_live_with_feedback(sid: str, session: dict, agent, arg: str, *, snapshot_kwargs: bool) -> str:
+@@ -285,6 +285,12 @@ def _mirror_personality(sid, session, agent, arg) -> None:
+         _apply_personality_to_session(sid, session, new_prompt, pname)
+ 
+ 
++def _mirror_soul(sid, session, agent, arg) -> None:
++    if arg and agent:
++        agent._cached_system_prompt = None
++        _persist_live_session_system_prompt(session)
++
++
+ def _mirror_prompt(sid, session, agent, arg) -> None:
+     if agent:
+         cfg = _load_cfg()
+@@ -316,7 +322,8 @@ def _mirror_stop(sid, session, agent, arg) -> None:
+ _SLASH_MIRRORS = {
+     "model": lambda sid, session, agent, arg: (
+         _apply_model_switch(sid, session, arg).get("warning", "") if arg and agent else ""),
+-    "approvals": _mirror_approvals, "personality": _mirror_personality, "prompt": _mirror_prompt,
++    "approvals": _mirror_approvals, "personality": _mirror_personality, "soul": _mirror_soul,
++    "prompt": _mirror_prompt,
+     "compress": lambda sid, session, agent, arg: (
+         _compress_live_with_feedback(sid, session, agent, arg, snapshot_kwargs=False) if agent else ""),
+     "fast": _mirror_fast,
